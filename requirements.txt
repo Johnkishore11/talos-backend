@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+firebase-admin
+razorpay
+pydantic[email]
+python-dotenv
+python-multipart
+aiosmtplib
