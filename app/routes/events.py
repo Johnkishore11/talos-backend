@@ -9,6 +9,7 @@ from datetime import datetime
 
 router = APIRouter()
 
+@router.get("", response_model=List[Event])
 @router.get("/", response_model=List[Event])
 async def get_events(status: Optional[str] = None):
     try:
