@@ -13,7 +13,10 @@ logger = logging.getLogger("app")
 app = FastAPI(title="TALOS Backend", version="1.0.0")
 
 # CORS
-origins = ["*"]
+origins = [
+    "http://localhost:3000",
+    "https://talos-nine.vercel.app"
+]
 
 app.add_middleware(
     CORSMiddleware,
