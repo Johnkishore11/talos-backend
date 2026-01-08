@@ -4,6 +4,11 @@ from fastapi.responses import JSONResponse
 from app.config import settings
 from app.routes import user, events, workshops, webhooks
 from app.dependencies import verify_token_str
+import logging
+
+# Basic logger used for simple request/health-check visibility in logs
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("app")
 
 app = FastAPI(title="TALOS Backend", version="1.0.0")
 
@@ -25,7 +30,11 @@ app.add_middleware(
 # --- Global Authorization Middleware ---
 def is_public_endpoint(request: Request) -> bool:
     path = request.url.path
-    method = request.method
+    method = request.method.upper()
+
+    # Treat HEAD like GET so health checks using HEAD succeed
+    if method == "HEAD":
+        method = "GET"
 
     # 1. Root & Docs
     if path in ["/", "/docs", "/redoc", "/openapi.json"]:
@@ -51,6 +60,7 @@ def is_public_endpoint(request: Request) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url.path}")
     if is_public_endpoint(request):
         # Even for public endpoints, if a token IS provided, we might want to resolve it 
         # (optional auth). But for now, let's keep it simple: Public = No Auth Check.
@@ -86,4 +96,11 @@ app.include_router(webhooks.router, prefix="/api/webhooks", tags=["Webhooks"])
 
 @app.get("/")
 async def root():
+    logger.info("Root endpoint called")
     return {"message": "Welcome to TALOS Backend API"}
+
+
+@app.get("/healthz")
+async def healthz():
+    # Simple health endpoint for platform health checks
+    return {"status": "ok"}
