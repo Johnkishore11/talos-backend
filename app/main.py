@@ -59,6 +59,9 @@ def is_public_endpoint(request: Request) -> bool:
 
 @app.middleware("http")
 async def auth_middleware(request: Request, call_next):
+    if request.method == "OPTIONS":
+        return await call_next(request)
+        
     logger.info(f"Incoming request: {request.method} {request.url.path}")
     if is_public_endpoint(request):
         # Even for public endpoints, if a token IS provided, we might want to resolve it 
