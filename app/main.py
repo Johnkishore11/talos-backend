@@ -13,7 +13,7 @@ logger = logging.getLogger("app")
 app = FastAPI(title="TALOS Backend", version="1.0.0")
 
 # CORS
-origins = [*]
+origins = ["*"]
 
 app.add_middleware(
     CORSMiddleware,
