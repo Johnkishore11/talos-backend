@@ -11,6 +11,7 @@ from typing import List, Optional
 
 router = APIRouter()
 
+@router.get("", response_model=List[Workshop])
 @router.get("/", response_model=List[Workshop])
 async def get_workshops(status: Optional[str] = "open"):
     print(f"DEBUG: get_workshops called with status={status}")
