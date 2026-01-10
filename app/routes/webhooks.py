@@ -42,20 +42,55 @@ async def razorpay_webhook(
         return {"status": "ignored", "reason": "no_order_id"}
 
     # 3. Handle Events
-    if event == "payment.captured":
-        # Update payment status
+    if event == "payment.captured" or event == "order.paid":
         payment_ref = db.collection("payments").document(order_id)
         doc = payment_ref.get()
         if doc.exists:
+            payment_data = doc.to_dict()
             payment_ref.update({
                 "status": "captured",
                 "payment_id": payment_entity.get("id"),
                 "updated_at": datetime.utcnow()
             })
             
-            # Logic to create registration if not exists could go here
-            # But usually verify-payment handles it. 
-            # If verify-payment failed or user closed window, we might need to recover here.
+            # Create registration if not exists (recovery for closed window)
+            workshop_id = payment_data.get("workshop_id")
+            if workshop_id and not payment_data.get("registration_id"):
+                import uuid
+                from app.services.email_service import send_workshop_payment_success_email
+                
+                reg_id = str(uuid.uuid4())
+                workshop_doc = db.collection("workshops").document(workshop_id).get()
+                workshop_data = workshop_doc.to_dict() if workshop_doc.exists else {}
+                
+                reg_data = {
+                    "registration_id": reg_id,
+                    "workshop_id": workshop_id,
+                    "workshop_name": workshop_data.get("title", ""),
+                    "name": payment_data.get("name"),
+                    "email": payment_data.get("email"),
+                    "phone": payment_data.get("phone"),
+                    "year": payment_data.get("year"),
+                    "college_name": payment_data.get("college_name"),
+                    "referral_id": payment_data.get("referral_id"),
+                    "payment_id": payment_entity.get("id"),
+                    "order_id": order_id,
+                    "amount": payment_data.get("amount"),
+                    "payment_status": "completed",
+                    "status": "confirmed",
+                    "registered_at": datetime.utcnow(),
+                    "payment_completed_at": datetime.utcnow()
+                }
+                
+                db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
+                payment_ref.update({"registration_id": reg_id})
+                
+                background_tasks.add_task(
+                    send_workshop_payment_success_email,
+                    payment_data.get("email"),
+                    workshop_data.get("title"),
+                    payment_data.get("amount", 0)
+                )
         else:
             print(f"Payment record for order {order_id} not found in webhook")
 
