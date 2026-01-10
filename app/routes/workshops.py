@@ -32,15 +32,15 @@ async def get_workshop(workshop_id: str):
     return doc.to_dict()
 
 
-@router.post("/{workshop_id}/create-order")
-async def create_workshop_order(
+@router.post("/{workshop_id}/create-payment-link")
+async def create_workshop_payment_link(
     workshop_id: str,
     registration: WorkshopRegistrationRequest,
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Create a Razorpay order for workshop registration.
-    Solo registration with payment.
+    Create a Razorpay payment link for workshop registration.
+    Returns payment link URL for user to complete payment.
     """
     
     # 1. Get Workshop Details
@@ -51,40 +51,48 @@ async def create_workshop_order(
     
     workshop_data = workshop.to_dict()
     
-    # 2. Check if workshop is open (default to "open" if not set)
+    # 2. Check if workshop is open
     workshop_status = workshop_data.get("status", "open") or "open"
     if workshop_status != "open":
         raise HTTPException(status_code=400, detail="Workshop registration is closed")
     
     amount = workshop_data.get("registration_fee", 0)
-    
     if amount <= 0:
         raise HTTPException(status_code=400, detail="This workshop is free, use direct registration")
 
-    # 3. Check if already registered (by email)
+    # 3. Check if already registered
     registrations_ref = db.collection(f"{workshop_id}_registrations")
     existing_reg = registrations_ref.where("email", "==", registration.email).where("status", "==", "confirmed").limit(1).get()
-        
     if list(existing_reg):
         raise HTTPException(status_code=400, detail="This email is already registered for this workshop")
 
-    # 4. Create Razorpay Order
+    # 4. Create Payment Link
     try:
-        receipt = f"rcpt_{workshop_id[:8]}_{int(datetime.utcnow().timestamp())}"
-        notes = {
-            "workshop_id": workshop_id,
-            "email": registration.email,
-            "name": registration.name
-        }
-        order = razorpay_service.create_order(amount, currency="INR", receipt=receipt, notes=notes)
+        reference_id = f"{workshop_id}_{int(datetime.utcnow().timestamp())}"
+        callback_url = f"{settings.FRONTEND_URL}/workshops/{workshop_id}/payment-success"
+        
+        payment_link = razorpay_service.create_payment_link(
+            amount=amount,
+            description=f"Registration for {workshop_data.get('title', 'Workshop')}",
+            customer_name=registration.name,
+            customer_email=registration.email,
+            customer_phone=registration.phone,
+            reference_id=reference_id,
+            callback_url=callback_url,
+            notes={
+                "workshop_id": workshop_id,
+                "email": registration.email,
+                "name": registration.name
+            }
+        )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Payment initialization failed: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Payment link creation failed: {str(e)}")
 
     # 5. Save pending payment info
-    payment_doc_id = order["id"]
+    payment_doc_id = payment_link["id"]
     payment_data = {
-        "payment_id": payment_doc_id,
-        "order_id": order["id"],
+        "payment_link_id": payment_link["id"],
+        "reference_id": reference_id,
         "workshop_id": workshop_id,
         "email": registration.email,
         "name": registration.name,
@@ -95,100 +103,109 @@ async def create_workshop_order(
         "amount": amount,
         "currency": "INR",
         "status": "created",
+        "short_url": payment_link["short_url"],
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
     db.collection("payments").document(payment_doc_id).set(payment_data)
 
     return {
-        "order_id": order["id"],
-        "amount": order["amount"],
-        "currency": order["currency"],
-        "key_id": settings.RAZORPAY_KEY_ID
+        "payment_link_id": payment_link["id"],
+        "short_url": payment_link["short_url"],
+        "amount": amount,
+        "reference_id": reference_id
     }
 
 
-@router.post("/{workshop_id}/verify-payment")
-async def verify_workshop_payment(
+@router.get("/{workshop_id}/payment-callback")
+async def payment_callback(
     workshop_id: str,
-    verification: PaymentVerificationRequest,
-    background_tasks: BackgroundTasks,
-    current_user: dict = Depends(get_current_user)
+    payment_link_id: str,
+    payment_link_reference_id: str,
+    payment_link_status: str,
+    razorpay_payment_id: str = None,
+    razorpay_signature: str = None
 ):
     """
-    Verify Razorpay payment and complete workshop registration.
-    Stores registration in {workshop_id}_registrations collection.
+    Handle payment link callback from Razorpay.
+    Verifies signature and creates registration.
     """
     
     # 1. Verify Signature
-    params_dict = {
-        "razorpay_order_id": verification.razorpay_order_id,
-        "razorpay_payment_id": verification.razorpay_payment_id,
-        "razorpay_signature": verification.razorpay_signature
-    }
+    if razorpay_signature:
+        try:
+            razorpay_service.verify_payment_link_signature(
+                payment_link_id,
+                payment_link_reference_id,
+                payment_link_status,
+                razorpay_signature
+            )
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid payment signature")
     
-    try:
-        razorpay_service.verify_payment_signature(params_dict)
-    except Exception:
-        raise HTTPException(status_code=400, detail="Invalid payment signature")
-
-    # 2. Get Workshop Details
+    # 2. Check payment status
+    if payment_link_status != "paid":
+        return {"status": "pending", "message": "Payment not completed"}
+    
+    # 3. Get payment data
+    payment_ref = db.collection("payments").document(payment_link_id)
+    payment_doc = payment_ref.get()
+    if not payment_doc.exists:
+        raise HTTPException(status_code=404, detail="Payment record not found")
+    
+    payment_data = payment_doc.to_dict()
+    
+    # 4. Check if already processed
+    if payment_data.get("registration_id"):
+        return {
+            "status": "success",
+            "message": "Registration already completed",
+            "registration_id": payment_data.get("registration_id")
+        }
+    
+    # 5. Get workshop details
     workshop_doc = db.collection("workshops").document(workshop_id).get()
     if not workshop_doc.exists:
         raise HTTPException(status_code=404, detail="Workshop not found")
     workshop_data = workshop_doc.to_dict()
-
-    # 3. Create Registration in workshop-specific collection
+    
+    # 6. Create registration
     reg_id = str(uuid.uuid4())
     reg_data = {
         "registration_id": reg_id,
         "workshop_id": workshop_id,
         "workshop_name": workshop_data.get("title", ""),
-        
-        # Participant Info
-        "name": verification.name,
-        "email": verification.email,
-        "phone": verification.phone,
-        "year": verification.year,
-        "college_name": verification.college_name,
-        "referral_id": verification.referral_id,
-        
-        # Payment Info
-        "payment_id": verification.razorpay_payment_id,
-        "order_id": verification.razorpay_order_id,
-        "amount": workshop_data.get("registration_fee", 0),
+        "name": payment_data.get("name"),
+        "email": payment_data.get("email"),
+        "phone": payment_data.get("phone"),
+        "year": payment_data.get("year"),
+        "college_name": payment_data.get("college_name"),
+        "referral_id": payment_data.get("referral_id"),
+        "payment_id": razorpay_payment_id,
+        "payment_link_id": payment_link_id,
+        "amount": payment_data.get("amount"),
         "payment_status": "completed",
-        
-        # Metadata
         "status": "confirmed",
         "registered_at": datetime.utcnow(),
         "payment_completed_at": datetime.utcnow()
     }
     
-    # Store in workshop-specific collection
-    registrations_ref = db.collection(f"{workshop_id}_registrations")
-    registrations_ref.document(reg_id).set(reg_data)
+    db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
     
-    # 4. Update Payment Record
-    payment_ref = db.collection("payments").document(verification.razorpay_order_id)
-    if payment_ref.get().exists:
-        payment_ref.update({
-            "status": "captured",
-            "registration_id": reg_id,
-            "razorpay_signature": verification.razorpay_signature,
-            "updated_at": datetime.utcnow()
-        })
-
-    # 5. Send confirmation email
-    if verification.email:
-        background_tasks.add_task(
-            send_workshop_payment_success_email,
-            verification.email,
-            workshop_data.get("title"),
-            workshop_data.get("registration_fee", 0)
-        )
-
-    return {"message": "Registration confirmed", "registration_id": reg_id}
+    # 7. Update payment record
+    payment_ref.update({
+        "status": "paid",
+        "registration_id": reg_id,
+        "razorpay_payment_id": razorpay_payment_id,
+        "razorpay_signature": razorpay_signature,
+        "updated_at": datetime.utcnow()
+    })
+    
+    return {
+        "status": "success",
+        "message": "Registration confirmed",
+        "registration_id": reg_id
+    }
 
 
 @router.get("/{workshop_id}/check-email")

@@ -35,27 +35,35 @@ async def razorpay_webhook(
 
     event = data.get("event")
     payload = data.get("payload", {})
-    payment_entity = payload.get("payment", {}).get("entity", {})
-    order_id = payment_entity.get("order_id")
     
-    if not order_id:
-        return {"status": "ignored", "reason": "no_order_id"}
+    if not event:
+        return {"status": "ignored", "reason": "no_event"}
 
     # 3. Handle Events
-    if event == "payment.captured" or event == "order.paid":
-        payment_ref = db.collection("payments").document(order_id)
+    if event == "payment_link.paid":
+        payment_link_entity = payload.get("payment_link", {}).get("entity", {})
+        payment_link_id = payment_link_entity.get("id")
+        
+        if not payment_link_id:
+            return {"status": "ignored", "reason": "no_payment_link_id"}
+        
+        payment_ref = db.collection("payments").document(payment_link_id)
         doc = payment_ref.get()
         if doc.exists:
             payment_data = doc.to_dict()
+            
+            # Check if already processed
+            if payment_data.get("registration_id"):
+                return {"status": "ok", "message": "Already processed"}
+            
             payment_ref.update({
-                "status": "captured",
-                "payment_id": payment_entity.get("id"),
+                "status": "paid",
                 "updated_at": datetime.utcnow()
             })
             
-            # Create registration if not exists (recovery for closed window)
+            # Create registration
             workshop_id = payment_data.get("workshop_id")
-            if workshop_id and not payment_data.get("registration_id"):
+            if workshop_id:
                 import uuid
                 from app.services.email_service import send_workshop_payment_success_email
                 
@@ -73,8 +81,8 @@ async def razorpay_webhook(
                     "year": payment_data.get("year"),
                     "college_name": payment_data.get("college_name"),
                     "referral_id": payment_data.get("referral_id"),
-                    "payment_id": payment_entity.get("id"),
-                    "order_id": order_id,
+                    "payment_id": payment_link_entity.get("payments", [{}])[0].get("payment_id") if payment_link_entity.get("payments") else None,
+                    "payment_link_id": payment_link_id,
                     "amount": payment_data.get("amount"),
                     "payment_status": "completed",
                     "status": "confirmed",
@@ -92,14 +100,18 @@ async def razorpay_webhook(
                     payment_data.get("amount", 0)
                 )
         else:
-            print(f"Payment record for order {order_id} not found in webhook")
+            print(f"Payment record for payment_link {payment_link_id} not found in webhook")
 
-    elif event == "payment.failed":
-        payment_ref = db.collection("payments").document(order_id)
-        if payment_ref.get().exists:
-             payment_ref.update({
-                "status": "failed",
-                "updated_at": datetime.utcnow()
-            })
+    elif event == "payment_link.cancelled" or event == "payment_link.expired":
+        payment_link_entity = payload.get("payment_link", {}).get("entity", {})
+        payment_link_id = payment_link_entity.get("id")
+        
+        if payment_link_id:
+            payment_ref = db.collection("payments").document(payment_link_id)
+            if payment_ref.get().exists:
+                payment_ref.update({
+                    "status": event.split(".")[1],
+                    "updated_at": datetime.utcnow()
+                })
 
     return {"status": "ok"}
