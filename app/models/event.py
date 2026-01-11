@@ -2,6 +2,12 @@ from pydantic import BaseModel, model_validator, EmailStr, field_validator
 from typing import Optional, List, Any
 from datetime import datetime
 
+
+class EventOrganiser(BaseModel):
+    name: str
+    contact: List[str] = []
+
+
 class EventBase(BaseModel):
     title: str
     description: str
@@ -14,6 +20,7 @@ class EventBase(BaseModel):
     min_team_size: int = 2  # Minimum 2 (leader + 1 member)
     max_team_size: int = 4  # Maximum 4 (leader + 3 members)
     status: str = "open"  # "open", "closed", "cancelled"
+    organiser: Optional[EventOrganiser] = None  # Organiser details
 
     @model_validator(mode='before')
     @classmethod
