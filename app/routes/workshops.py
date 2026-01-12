@@ -192,6 +192,22 @@ async def payment_callback(
     
     db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
     
+    # Update user document with registered workshop
+    try:
+        # Find user by email
+        users_query = db.collection("users").where("email", "==", payment_data.get("email")).limit(1).get()
+        for user_doc in users_query:
+            from google.cloud.firestore import ArrayUnion
+            db.collection("users").document(user_doc.id).update({
+                "registered_workshops": ArrayUnion([{
+                    "workshop_id": workshop_id,
+                    "registration_id": reg_id,
+                    "registered_at": datetime.utcnow().isoformat()
+                }])
+            })
+    except Exception as e:
+        print(f"Warning: Failed to update user document: {e}")
+    
     # 7. Update payment record
     payment_ref.update({
         "status": "paid",

@@ -11,14 +11,22 @@ router = APIRouter()
 @router.get("/profile", response_model=User)
 async def get_user_profile(current_user: dict = Depends(get_current_user)):
     uid = current_user["uid"]
+    email = current_user.get("email")
     doc_ref = db.collection("users").document(uid)
     doc = doc_ref.get()
     
     if not doc.exists:
-        # If user doesn't exist in DB but has a valid Firebase Token, maybe create? 
-        # Or return 404. PRD assumes user management. 
-        # Let's return 404 for now or minimal info.
-        raise HTTPException(status_code=404, detail="User profile not found")
+        # Create a basic user profile if it doesn't exist
+        from datetime import datetime
+        user_data = {
+            "uid": uid,
+            "email": email or "",
+            "name": current_user.get("name", ""),
+            "created_at": datetime.utcnow().isoformat(),
+            "last_login": datetime.utcnow().isoformat()
+        }
+        doc_ref.set(user_data)
+        return user_data
         
     return doc.to_dict()
 
@@ -43,70 +51,94 @@ async def update_user_profile(
 @router.get("/events")
 async def get_user_events(current_user: dict = Depends(get_current_user)):
     """
-    Get all event registrations for the current user.
-    Searches across all event-specific collections ({event_id}_registrations)
-    by the user's email.
+    Get all event registrations for the current user from their user document.
     """
-    user_email = current_user.get("email")
-    if not user_email:
+    uid = current_user.get("uid")
+    if not uid:
         return []
     
-    all_registrations = []
-    
-    # Get all events to know which collections to search
-    events_docs = db.collection("events").stream()
-    
-    for event_doc in events_docs:
-        event_id = event_doc.id
-        event_data = event_doc.to_dict()
+    try:
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
         
-        # Search in the event-specific registrations collection
-        registrations_ref = db.collection(f"{event_id}_registrations")
+        if not user_doc.exists:
+            return []
         
-        # Search by leader_email (team leader)
-        leader_regs = registrations_ref.where("leader_email", "==", user_email).stream()
+        user_data = user_doc.to_dict()
+        registered_events = user_data.get("registered_events", [])
         
-        for reg_doc in leader_regs:
-            reg_data = reg_doc.to_dict()
-            reg_data["event_name"] = event_data.get("title", event_id)
-            reg_data["event_date"] = event_data.get("date", "")
-            reg_data["event_venue"] = event_data.get("venue", "")
-            all_registrations.append(reg_data)
-    
-    return all_registrations
+        # Fetch full event details for each registration
+        all_registrations = []
+        for reg_ref in registered_events:
+            event_id = reg_ref.get("event_id")
+            registration_id = reg_ref.get("registration_id")
+            
+            if not event_id or not registration_id:
+                continue
+            
+            # Get event details
+            event_doc = db.collection("events").document(event_id).get()
+            event_data = event_doc.to_dict() if event_doc.exists else {}
+            
+            # Get registration details
+            reg_doc = db.collection(f"{event_id}_registrations").document(registration_id).get()
+            if reg_doc.exists:
+                reg_data = reg_doc.to_dict()
+                reg_data["registration_id"] = registration_id
+                reg_data["event_name"] = event_data.get("title", event_id)
+                reg_data["event_date"] = event_data.get("date", "")
+                reg_data["event_venue"] = event_data.get("venue", "")
+                all_registrations.append(reg_data)
+        
+        return all_registrations
+    except Exception as e:
+        print(f"Error fetching user events: {e}")
+        return []
 
 @router.get("/workshops")
 async def get_user_workshops(current_user: dict = Depends(get_current_user)):
     """
-    Get all workshop registrations for the current user.
-    Searches across all workshop-specific collections ({workshop_id}_registrations)
-    by the user's email.
+    Get all workshop registrations for the current user from their user document.
     """
-    user_email = current_user.get("email")
-    if not user_email:
+    uid = current_user.get("uid")
+    if not uid:
         return []
     
-    all_registrations = []
-    
-    # Get all workshops to know which collections to search
-    workshops_docs = db.collection("workshops").stream()
-    
-    for workshop_doc in workshops_docs:
-        workshop_id = workshop_doc.id
-        workshop_data = workshop_doc.to_dict()
+    try:
+        user_ref = db.collection("users").document(uid)
+        user_doc = user_ref.get()
         
-        # Search in the workshop-specific registrations collection
-        registrations_ref = db.collection(f"{workshop_id}_registrations")
+        if not user_doc.exists:
+            return []
         
-        # Search by email
-        user_regs = registrations_ref.where("email", "==", user_email).where("status", "==", "confirmed").stream()
+        user_data = user_doc.to_dict()
+        registered_workshops = user_data.get("registered_workshops", [])
         
-        for reg_doc in user_regs:
-            reg_data = reg_doc.to_dict()
-            reg_data["workshop_name"] = workshop_data.get("title", workshop_id)
-            reg_data["workshop_date"] = workshop_data.get("date", "")
-            reg_data["workshop_venue"] = workshop_data.get("venue", "")
-            reg_data["instructor"] = workshop_data.get("instructor", "")
-            all_registrations.append(reg_data)
-    
-    return all_registrations
+        # Fetch full workshop details for each registration
+        all_registrations = []
+        for reg_ref in registered_workshops:
+            workshop_id = reg_ref.get("workshop_id")
+            registration_id = reg_ref.get("registration_id")
+            
+            if not workshop_id or not registration_id:
+                continue
+            
+            # Get workshop details
+            workshop_doc = db.collection("workshops").document(workshop_id).get()
+            workshop_data = workshop_doc.to_dict() if workshop_doc.exists else {}
+            
+            # Get registration details
+            reg_doc = db.collection(f"{workshop_id}_registrations").document(registration_id).get()
+            if reg_doc.exists:
+                reg_data = reg_doc.to_dict()
+                reg_data["registration_id"] = registration_id
+                reg_data["workshop_name"] = workshop_data.get("title", workshop_id)
+                reg_data["workshop_date"] = workshop_data.get("date", "")
+                reg_data["workshop_venue"] = workshop_data.get("venue", "")
+                reg_data["instructor"] = workshop_data.get("instructor", "")
+                all_registrations.append(reg_data)
+        
+        return all_registrations
+    except Exception as e:
+        print(f"Error fetching user workshops: {e}")
+        return []

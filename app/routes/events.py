@@ -118,6 +118,25 @@ async def register_event(
     # Store in event-specific collection
     registrations_ref.document(reg_id).set(reg_data)
     
+    # Update user document with registered event
+    try:
+        user_ref = db.collection("users").document(current_user["uid"])
+        user_doc = user_ref.get()
+        
+        if user_doc.exists:
+            # Add event to user's registered_events array
+            from google.cloud.firestore import ArrayUnion
+            user_ref.update({
+                "registered_events": ArrayUnion([{
+                    "event_id": event_id,
+                    "registration_id": reg_id,
+                    "team_name": registration.team_name,
+                    "registered_at": datetime.utcnow().isoformat()
+                }])
+            })
+    except Exception as e:
+        print(f"Warning: Failed to update user document: {e}")
+    
     # 7. Send confirmation email
     if registration.leader_email:
         background_tasks.add_task(
