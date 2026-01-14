@@ -11,6 +11,7 @@ class EventOrganiser(BaseModel):
 class EventBase(BaseModel):
     title: str
     description: str
+    main_description: Optional[str] = None
     category: str
     date: str
     time: str
@@ -20,6 +21,7 @@ class EventBase(BaseModel):
     min_team_size: int = 2  # Minimum 2 (leader + 1 member)
     max_team_size: int = 4  # Maximum 4 (leader + 3 members)
     status: str = "open"  # "open", "closed", "cancelled"
+    rules: Optional[List[str]] = None
     organiser: Optional[EventOrganiser] = None  # Organiser details
 
     @model_validator(mode='before')
