@@ -1,10 +1,14 @@
-from pydantic import BaseModel, EmailStr, field_validator, model_validator
-from typing import Optional, Any
+from pydantic import BaseModel, EmailStr, field_validator, model_validator, ConfigDict
+from typing import Optional, Any, List
 from datetime import datetime
 
 class WorkshopBase(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    
     title: str
     description: str
+    main_description: Optional[str] = None
+    rules: Optional[str] = None
     instructor: str
     date: str
     time: str
