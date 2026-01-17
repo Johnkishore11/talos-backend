@@ -1,4 +1,4 @@
-from pydantic import BaseModel, model_validator, EmailStr, field_validator
+from pydantic import BaseModel, model_validator, EmailStr, field_validator, ConfigDict
 from typing import Optional, List, Any
 from datetime import datetime
 
@@ -9,20 +9,22 @@ class EventOrganiser(BaseModel):
 
 
 class EventBase(BaseModel):
+    model_config = ConfigDict(extra='ignore')
+    
     title: str
     description: str
     main_description: Optional[str] = None
+    rules: Optional[str] = None
     category: str
     date: str
     time: str
     venue: Optional[str] = None
     image_url: str
     max_participants: Optional[int] = None
-    min_team_size: int = 2  # Minimum 2 (leader + 1 member)
-    max_team_size: int = 4  # Maximum 4 (leader + 3 members)
-    status: str = "open"  # "open", "closed", "cancelled"
-    rules: Optional[List[str]] = None
-    organiser: Optional[EventOrganiser] = None  # Organiser details
+    min_team_size: int = 2
+    max_team_size: int = 4
+    status: str = "open"
+    organiser: Optional[EventOrganiser] = None
 
     @model_validator(mode='before')
     @classmethod
