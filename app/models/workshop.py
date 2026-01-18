@@ -1,5 +1,5 @@
 from pydantic import BaseModel, EmailStr, field_validator, model_validator, ConfigDict
-from typing import Optional, Any, List
+from typing import Optional, Any, List, Dict
 from datetime import datetime
 
 class WorkshopBase(BaseModel):
@@ -18,6 +18,7 @@ class WorkshopBase(BaseModel):
     max_participants: Optional[int] = None
     registration_fee: int
     status: str = "open"
+    organisers: Optional[List[Dict[str, Any]]] = None
 
     @model_validator(mode='before')
     @classmethod
