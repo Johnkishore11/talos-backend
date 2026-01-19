@@ -121,8 +121,6 @@ class EventRegistrationRequest(BaseModel):
     @field_validator('members')
     @classmethod
     def validate_members(cls, v: List[TeamMember]) -> List[TeamMember]:
-        if len(v) < 1:
-            raise ValueError('At least 1 team member is required')
         if len(v) > 3:
             raise ValueError('Maximum 3 team members allowed')
         return v
