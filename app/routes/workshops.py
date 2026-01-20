@@ -233,6 +233,65 @@ async def check_email_registered(workshop_id: str, email: str):
     return {"registered": bool(list(existing_reg))}
 
 
+@router.post("/{workshop_id}/register")
+async def register_workshop(
+    workshop_id: str,
+    registration: WorkshopRegistrationRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Direct workshop registration with transaction ID"""
+    
+    workshop_ref = db.collection("workshops").document(workshop_id)
+    workshop = workshop_ref.get()
+    if not workshop.exists:
+        raise HTTPException(status_code=404, detail="Workshop not found")
+    
+    workshop_data = workshop.to_dict()
+    
+    if workshop_data.get("status") != "open":
+        raise HTTPException(status_code=400, detail="Workshop registration is closed")
+    
+    registrations_ref = db.collection(f"{workshop_id}_registrations")
+    existing_reg = registrations_ref.where("email", "==", registration.email).limit(1).get()
+    if list(existing_reg):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    reg_id = str(uuid.uuid4())
+    reg_data = {
+        "registration_id": reg_id,
+        "workshop_id": workshop_id,
+        "workshop_name": workshop_data.get("title", ""),
+        "name": registration.name,
+        "email": registration.email,
+        "phone": registration.phone,
+        "year": registration.year,
+        "college_name": registration.college_name,
+        "referral_id": registration.referral_id,
+        "transaction_id": registration.transaction_id,
+        "payment_status": "pending",
+        "status": "pending",
+        "registered_at": datetime.utcnow()
+    }
+    
+    db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
+    
+    try:
+        users_query = db.collection("users").where("email", "==", registration.email).limit(1).get()
+        for user_doc in users_query:
+            from google.cloud.firestore import ArrayUnion
+            db.collection("users").document(user_doc.id).update({
+                "registered_workshops": ArrayUnion([{
+                    "workshop_id": workshop_id,
+                    "registration_id": reg_id,
+                    "registered_at": datetime.utcnow().isoformat()
+                }])
+            })
+    except Exception as e:
+        print(f"Warning: Failed to update user: {e}")
+    
+    return {"message": "Registration successful", "registration_id": reg_id}
+
+
 @router.get("/{workshop_id}/registrations")
 async def get_workshop_registrations(
     workshop_id: str,

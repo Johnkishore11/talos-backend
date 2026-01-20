@@ -52,6 +52,7 @@ class WorkshopRegistrationRequest(BaseModel):
     phone: str
     year: str  # e.g., "1st Year", "2nd Year", etc.
     college_name: str
+    transaction_id: str  # Required transaction ID
     referral_id: Optional[str] = None  # Optional referral
 
     @field_validator('phone')
