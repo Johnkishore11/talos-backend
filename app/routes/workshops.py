@@ -3,6 +3,7 @@ from app.dependencies import get_current_user, get_optional_user
 from app.services.firebase_service import db
 from app.services import razorpay_service
 from app.services.email_service import send_workshop_payment_success_email
+from app.services.google_sheets_service import get_google_sheets_service
 from app.models.workshop import Workshop, WorkshopRegistrationRequest, PaymentVerificationRequest
 from app.config import settings
 import uuid
@@ -123,6 +124,7 @@ async def payment_callback(
     payment_link_id: str,
     payment_link_reference_id: str,
     payment_link_status: str,
+    background_tasks: BackgroundTasks,
     razorpay_payment_id: str = None,
     razorpay_signature: str = None
 ):
@@ -192,6 +194,12 @@ async def payment_callback(
     
     db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
     
+    # Sync to Google Sheets
+    background_tasks.add_task(
+        _sync_workshop_to_google_sheets,
+        reg_data
+    )
+
     # Update user document with registered workshop
     try:
         # Find user by email
@@ -265,6 +273,7 @@ async def check_user_registration(
 async def register_workshop(
     workshop_id: str,
     registration: WorkshopRegistrationRequest,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(get_current_user)
 ):
     """Direct workshop registration with transaction ID"""
@@ -303,6 +312,12 @@ async def register_workshop(
     
     db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
     
+    # Sync to Google Sheets
+    background_tasks.add_task(
+        _sync_workshop_to_google_sheets,
+        reg_data
+    )
+
     try:
         users_query = db.collection("users").where("email", "==", registration.email).limit(1).get()
         for user_doc in users_query:
@@ -345,3 +360,44 @@ async def get_workshop_registrations(
     docs = registrations_ref.stream()
     
     return [doc.to_dict() for doc in docs]
+
+
+def _sync_workshop_to_google_sheets(reg_data: dict):
+    """Background task to sync workshop registration to Google Sheets"""
+    try:
+        print(f"📊 Starting Google Sheets sync for workshop registration: {reg_data.get('registration_id')}")
+        sheets_service = get_google_sheets_service()
+        
+        if not sheets_service or not sheets_service.service:
+            print(f"❌ Google Sheets service not available")
+            return
+        
+        workshop_data = {
+            'workshop_id': reg_data.get('workshop_id'),
+            'workshop_name': reg_data.get('workshop_name'),
+            'registration_id': reg_data.get('registration_id'),
+            'registered_at': reg_data.get('registered_at').strftime('%Y-%m-%d %H:%M:%S') if reg_data.get('registered_at') else '',
+            'status': reg_data.get('status', 'confirmed')
+        }
+        
+        participant_data = {
+            'college_name': reg_data.get('college_name'),
+            'name': reg_data.get('name'),
+            'email': reg_data.get('email'),
+            'phone': reg_data.get('phone'),
+            'year': reg_data.get('year'),
+            'payment_id': reg_data.get('payment_id') or reg_data.get('transaction_id', ''),
+            'amount': reg_data.get('amount', ''),
+            'payment_status': reg_data.get('payment_status', 'pending')
+        }
+        
+        result = sheets_service.append_workshop_registration(workshop_data, participant_data)
+        if result:
+            print(f"✅ Workshop registration synced to Google Sheets successfully")
+        else:
+            print(f"❌ Failed to sync workshop registration to Google Sheets")
+        
+    except Exception as e:
+        print(f"❌ ERROR syncing workshop registration to Google Sheets: {str(e)}")
+        import traceback
+        traceback.print_exc()
