@@ -62,7 +62,7 @@ async def create_workshop_payment_link(
 
     # 3. Check if already registered
     registrations_ref = db.collection(f"{workshop_id}_registrations")
-    existing_reg = registrations_ref.where("email", "==", registration.email).where("status", "==", "confirmed").limit(1).get()
+    existing_reg = registrations_ref.where("email", "==", registration.email).limit(1).get()
     if list(existing_reg):
         raise HTTPException(status_code=400, detail="This email is already registered for this workshop")
 
@@ -197,14 +197,23 @@ async def payment_callback(
         # Find user by email
         users_query = db.collection("users").where("email", "==", payment_data.get("email")).limit(1).get()
         for user_doc in users_query:
-            from google.cloud.firestore import ArrayUnion
-            db.collection("users").document(user_doc.id).update({
-                "registered_workshops": ArrayUnion([{
-                    "workshop_id": workshop_id,
-                    "registration_id": reg_id,
-                    "registered_at": datetime.utcnow().isoformat()
-                }])
-            })
+            user_data = user_doc.to_dict()
+            registered_workshops = user_data.get("registered_workshops", [])
+            
+            already_in_list = any(
+                w.get("workshop_id") == workshop_id and w.get("registration_id") == reg_id
+                for w in registered_workshops
+            )
+            
+            if not already_in_list:
+                from google.cloud.firestore import ArrayUnion
+                db.collection("users").document(user_doc.id).update({
+                    "registered_workshops": ArrayUnion([{
+                        "workshop_id": workshop_id,
+                        "registration_id": reg_id,
+                        "registered_at": datetime.utcnow().isoformat()
+                    }])
+                })
     except Exception as e:
         print(f"Warning: Failed to update user document: {e}")
     
@@ -228,9 +237,94 @@ async def payment_callback(
 async def check_email_registered(workshop_id: str, email: str):
     """Check if an email is already registered for a workshop"""
     registrations_ref = db.collection(f"{workshop_id}_registrations")
-    existing_reg = registrations_ref.where("email", "==", email).where("status", "==", "confirmed").limit(1).get()
+    existing_reg = registrations_ref.where("email", "==", email).limit(1).get()
     
     return {"registered": bool(list(existing_reg))}
+
+
+@router.get("/{workshop_id}/check-registration")
+async def check_user_registration(
+    workshop_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Check if current user is already registered for a workshop"""
+    email = current_user.get("email")
+    if not email:
+        return {"registered": False}
+    
+    registrations_ref = db.collection(f"{workshop_id}_registrations")
+    existing_reg = registrations_ref.where("email", "==", email).limit(1).get()
+    
+    return {"registered": bool(list(existing_reg))}
+
+
+@router.post("/{workshop_id}/register")
+async def register_workshop(
+    workshop_id: str,
+    registration: WorkshopRegistrationRequest,
+    current_user: dict = Depends(get_current_user)
+):
+    """Direct workshop registration with transaction ID"""
+    
+    workshop_ref = db.collection("workshops").document(workshop_id)
+    workshop = workshop_ref.get()
+    if not workshop.exists:
+        raise HTTPException(status_code=404, detail="Workshop not found")
+    
+    workshop_data = workshop.to_dict()
+    
+    if workshop_data.get("status") != "open":
+        raise HTTPException(status_code=400, detail="Workshop registration is closed")
+    
+    registrations_ref = db.collection(f"{workshop_id}_registrations")
+    existing_reg = registrations_ref.where("email", "==", registration.email).limit(1).get()
+    if list(existing_reg):
+        raise HTTPException(status_code=400, detail="Email already registered")
+    
+    reg_id = str(uuid.uuid4())
+    reg_data = {
+        "registration_id": reg_id,
+        "workshop_id": workshop_id,
+        "workshop_name": workshop_data.get("title", ""),
+        "name": registration.name,
+        "email": registration.email,
+        "phone": registration.phone,
+        "year": registration.year,
+        "college_name": registration.college_name,
+        "referral_id": registration.referral_id,
+        "transaction_id": registration.transaction_id,
+        "payment_status": "pending",
+        "status": "pending",
+        "registered_at": datetime.utcnow()
+    }
+    
+    db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
+    
+    try:
+        users_query = db.collection("users").where("email", "==", registration.email).limit(1).get()
+        for user_doc in users_query:
+            # Check if already in user's registered_workshops to prevent duplicates
+            user_data = user_doc.to_dict()
+            registered_workshops = user_data.get("registered_workshops", [])
+            
+            already_in_list = any(
+                w.get("workshop_id") == workshop_id and w.get("registration_id") == reg_id
+                for w in registered_workshops
+            )
+            
+            if not already_in_list:
+                from google.cloud.firestore import ArrayUnion
+                db.collection("users").document(user_doc.id).update({
+                    "registered_workshops": ArrayUnion([{
+                        "workshop_id": workshop_id,
+                        "registration_id": reg_id,
+                        "registered_at": datetime.utcnow().isoformat()
+                    }])
+                })
+    except Exception as e:
+        print(f"Warning: Failed to update user: {e}")
+    
+    return {"message": "Registration successful", "registration_id": reg_id}
 
 
 @router.get("/{workshop_id}/registrations")

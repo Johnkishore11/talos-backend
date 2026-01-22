@@ -44,9 +44,10 @@ async def register_event(
     current_user: dict = Depends(get_current_user)
 ):
     """
-    Register a team for an event (FREE registration).
+    Register a team for an event (FREE or PAID registration).
     Stores registration in {event_id}_registrations collection.
     Team name must be unique per event.
+    For paid events, transaction_id is required.
     """
     
     # 1. Check if event exists
@@ -62,7 +63,12 @@ async def register_event(
     if event_status != "open":
         raise HTTPException(status_code=400, detail="Event registration is closed")
     
-    # 3. Validate team size
+    # 3. Check if event has registration fee and transaction_id is required
+    registration_fee = event_data.get("registration_fee", 0)
+    if registration_fee > 0 and not registration.transaction_id:
+        raise HTTPException(status_code=400, detail="Transaction ID is required for paid events")
+    
+    # 4. Validate team size
     min_team_size = event_data.get("min_team_size", 2)  # Default: leader + 1 member
     max_team_size = event_data.get("max_team_size", 5)  # Default: leader + 4 members
     
@@ -78,18 +84,24 @@ async def register_event(
             detail=f"Team cannot have more than {max_team_size} members (including leader)"
         )
     
-    # 4. Check if team name is unique for this event
+    # 5. Check if team name is unique for this event
     registrations_ref = db.collection(f"{event_id}_registrations")
     existing_team = registrations_ref.where("team_name", "==", registration.team_name).limit(1).get()
     if list(existing_team):
         raise HTTPException(status_code=400, detail="Team name already exists for this event. Please choose a different name.")
     
-    # 5. Check if leader email is already registered for this event
+    # 6. Check if leader email is already registered for this event
     existing_leader = registrations_ref.where("leader_email", "==", registration.leader_email).limit(1).get()
     if list(existing_leader):
         raise HTTPException(status_code=400, detail="You are already registered for this event")
+    
+    # 7. Check if any team member email is already registered as leader
+    for member in registration.members:
+        existing_member = registrations_ref.where("leader_email", "==", member.email).limit(1).get()
+        if list(existing_member):
+            raise HTTPException(status_code=400, detail=f"Email {member.email} is already registered for this event")
 
-    # 6. Create Registration
+    # 8. Create Registration
     reg_id = str(uuid.uuid4())
     reg_data = {
         "registration_id": reg_id,
@@ -106,6 +118,7 @@ async def register_event(
         "leader_year": registration.leader_year,
         "college_name": registration.college_name,
         "referral_id": registration.referral_id,
+        "transaction_id": registration.transaction_id,
         
         # Team Members
         "members": [member.dict() for member in registration.members],
@@ -124,20 +137,30 @@ async def register_event(
         user_doc = user_ref.get()
         
         if user_doc.exists:
-            # Add event to user's registered_events array
-            from google.cloud.firestore import ArrayUnion
-            user_ref.update({
-                "registered_events": ArrayUnion([{
-                    "event_id": event_id,
-                    "registration_id": reg_id,
-                    "team_name": registration.team_name,
-                    "registered_at": datetime.utcnow().isoformat()
-                }])
-            })
+            # Check if already in user's registered_events to prevent duplicates
+            user_data = user_doc.to_dict()
+            registered_events = user_data.get("registered_events", [])
+            
+            # Check if this event is already in the list
+            already_in_list = any(
+                e.get("event_id") == event_id and e.get("registration_id") == reg_id 
+                for e in registered_events
+            )
+            
+            if not already_in_list:
+                from google.cloud.firestore import ArrayUnion
+                user_ref.update({
+                    "registered_events": ArrayUnion([{
+                        "event_id": event_id,
+                        "registration_id": reg_id,
+                        "team_name": registration.team_name,
+                        "registered_at": datetime.utcnow().isoformat()
+                    }])
+                })
     except Exception as e:
         print(f"Warning: Failed to update user document: {e}")
     
-    # 7. Send confirmation email
+    # 8. Send confirmation email
     if registration.leader_email:
         background_tasks.add_task(
             send_event_registration_email, 
@@ -146,8 +169,13 @@ async def register_event(
             event_data.get("date")
         )
 
+    # Determine status based on payment requirement
+    response_message = "Registration successful"
+    if registration_fee > 0:
+        response_message = "Registration successful! Your registration is pending verification."
+
     return {
-        "message": "Registration successful", 
+        "message": response_message, 
         "registration_id": reg_id,
         "team_name": registration.team_name
     }
@@ -160,6 +188,22 @@ async def check_team_name(event_id: str, team_name: str):
     existing_team = registrations_ref.where("team_name", "==", team_name).limit(1).get()
     
     return {"available": not list(existing_team)}
+
+
+@router.get("/{event_id}/check-registration")
+async def check_user_registration(
+    event_id: str,
+    current_user: dict = Depends(get_current_user)
+):
+    """Check if current user is already registered for an event"""
+    email = current_user.get("email")
+    if not email:
+        return {"registered": False}
+    
+    registrations_ref = db.collection(f"{event_id}_registrations")
+    existing_reg = registrations_ref.where("leader_email", "==", email).limit(1).get()
+    
+    return {"registered": bool(list(existing_reg))}
 
 
 @router.get("/{event_id}/registrations")

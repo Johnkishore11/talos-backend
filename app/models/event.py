@@ -23,6 +23,7 @@ class EventBase(BaseModel):
     max_participants: Optional[int] = None
     min_team_size: int = 2
     max_team_size: int = 4
+    registration_fee: int = 0
     status: str = "open"
     organiser: Optional[EventOrganiser] = None
 
@@ -106,6 +107,7 @@ class EventRegistrationRequest(BaseModel):
     leader_year: str  # e.g., "1st Year", "2nd Year", etc.
     college_name: str
     referral_id: Optional[str] = None  # Optional referral
+    transaction_id: Optional[str] = None  # Transaction ID for paid events
     
     # Team Members (1-3 members)
     members: List[TeamMember]
@@ -142,6 +144,7 @@ class EventRegistration(BaseModel):
     leader_year: str
     college_name: str
     referral_id: Optional[str] = None
+    transaction_id: Optional[str] = None
     
     # Team Members
     members: List[TeamMember]
