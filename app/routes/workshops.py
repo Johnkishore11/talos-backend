@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_optional_user
 from app.services.firebase_service import db
 from app.services import razorpay_service
 from app.services.email_service import send_workshop_payment_success_email
@@ -245,9 +245,12 @@ async def check_email_registered(workshop_id: str, email: str):
 @router.get("/{workshop_id}/check-registration")
 async def check_user_registration(
     workshop_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: Optional[dict] = Depends(get_optional_user)
 ):
     """Check if current user is already registered for a workshop"""
+    if not current_user:
+        return {"registered": False}
+    
     email = current_user.get("email")
     if not email:
         return {"registered": False}
