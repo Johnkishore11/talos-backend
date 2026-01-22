@@ -123,8 +123,9 @@ class EventRegistrationRequest(BaseModel):
     @field_validator('members')
     @classmethod
     def validate_members(cls, v: List[TeamMember]) -> List[TeamMember]:
-        if len(v) > 3:
-            raise ValueError('Maximum 3 team members allowed')
+        # Allow up to 9 members at model level; actual limit is enforced per-event in route handler
+        if len(v) > 9:
+            raise ValueError('Maximum 9 team members allowed')
         return v
 
 
