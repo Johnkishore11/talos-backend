@@ -64,7 +64,7 @@ async def register_event(
     
     # 3. Validate team size
     min_team_size = event_data.get("min_team_size", 2)  # Default: leader + 1 member
-    max_team_size = event_data.get("max_team_size", 4)  # Default: leader + 3 members
+    max_team_size = event_data.get("max_team_size", 5)  # Default: leader + 4 members
     
     total_members = len(registration.members) + 1  # +1 for leader
     if total_members < min_team_size:
