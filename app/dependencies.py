@@ -10,9 +10,9 @@ security_scheme = HTTPBearer()
 
 async def verify_token_str(token: str) -> dict:
     try:
-        # Add clock_skew_seconds to allow for slight time differences between client and server
-        # This handles "Token used too early" errors caused by clock drift
-        decoded_token = auth.verify_id_token(token, clock_skew_seconds=300)  # Allow 5 minutes of skew
+        # Firebase maximum allowed clock_skew_seconds is 60 (1 minute)
+        # Set to 60 instead of 300 to comply with Firebase limits
+        decoded_token = auth.verify_id_token(token, clock_skew_seconds=60)  # Allow max 60 seconds of skew
         uid = decoded_token["uid"]
         logger.info(f"Token verified successfully for uid: {uid}")
         return {"uid": uid, "token": decoded_token, "email": decoded_token.get("email")}
