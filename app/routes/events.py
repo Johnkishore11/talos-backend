@@ -2,6 +2,7 @@ from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
 from app.dependencies import get_current_user
 from app.services.firebase_service import db
 from app.services.email_service import send_event_registration_email
+from app.services.google_sheets_service import get_google_sheets_service
 from app.models.event import Event, EventRegistration, EventRegistrationRequest
 from typing import List, Optional
 import uuid
@@ -168,6 +169,13 @@ async def register_event(
             event_data.get("title"), 
             event_data.get("date")
         )
+    
+    # 9. Sync to Google Sheets (background task)
+    background_tasks.add_task(
+        _sync_event_to_google_sheets,
+        reg_data,
+        registration.members
+    )
 
     # Determine status based on payment requirement
     response_message = "Registration successful"
@@ -221,3 +229,53 @@ async def get_event_registrations(
     docs = registrations_ref.stream()
     
     return [doc.to_dict() for doc in docs]
+
+
+def _sync_event_to_google_sheets(reg_data: dict, members: list):
+    """Background task to sync event registration to Google Sheets"""
+    try:
+        print(f"📊 Starting Google Sheets sync for event registration: {reg_data.get('registration_id')}")
+        sheets_service = get_google_sheets_service()
+        
+        if not sheets_service or not sheets_service.service:
+            print(f"❌ Google Sheets service not available")
+            return
+        
+        leader_data = {
+            'college_name': reg_data.get('college_name'),
+            'name': reg_data.get('leader_name'),
+            'email': reg_data.get('leader_email'),
+            'phone': reg_data.get('leader_phone'),
+            'year': reg_data.get('leader_year')
+        }
+        
+        event_data = {
+            'event_id': reg_data.get('event_id'),
+            'event_name': reg_data.get('event_name'),
+            'registration_id': reg_data.get('registration_id'),
+            'team_name': reg_data.get('team_name'),
+            'referral_id': reg_data.get('referral_id'),
+            'registered_at': reg_data.get('registered_at').strftime('%Y-%m-%d %H:%M:%S') if reg_data.get('registered_at') else '',
+            'status': reg_data.get('status', 'confirmed')
+        }
+        
+        # Convert member dicts to formatted list
+        members_list = [
+            {
+                'name': m.get('name') if isinstance(m, dict) else m.name,
+                'email': m.get('email') if isinstance(m, dict) else m.email,
+                'phone': m.get('phone') if isinstance(m, dict) else m.phone
+            }
+            for m in members
+        ]
+        
+        result = sheets_service.append_event_registration(event_data, leader_data, members_list)
+        if result:
+            print(f"✅ Event registration synced to Google Sheets successfully")
+        else:
+            print(f"❌ Failed to sync event registration to Google Sheets")
+        
+    except Exception as e:
+        print(f"❌ ERROR syncing event registration to Google Sheets: {str(e)}")
+        import traceback
+        traceback.print_exc()

@@ -21,6 +21,10 @@ class Config:
     SMTP_PASSWORD = os.getenv("SMTP_PASSWORD")
     FROM_EMAIL = os.getenv("FROM_EMAIL")
 
+    # Google Sheets
+    GOOGLE_SHEETS_ID = os.getenv("GOOGLE_SHEETS_ID")
+    GOOGLE_SERVICE_ACCOUNT_KEY = os.getenv("GOOGLE_SERVICE_ACCOUNT_KEY")
+
     # App
     FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
 
