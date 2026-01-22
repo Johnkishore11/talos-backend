@@ -2,15 +2,22 @@ from fastapi import Header, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer
 from firebase_admin import auth
 from typing import Optional
+import time
+import logging
 
+logger = logging.getLogger("app")
 security_scheme = HTTPBearer()
 
 async def verify_token_str(token: str) -> dict:
     try:
-        decoded_token = auth.verify_id_token(token)
+        # Add clock_skew_seconds to allow for slight time differences between client and server
+        # This handles "Token used too early" errors caused by clock drift
+        decoded_token = auth.verify_id_token(token, clock_skew_seconds=300)  # Allow 5 minutes of skew
         uid = decoded_token["uid"]
+        logger.info(f"Token verified successfully for uid: {uid}")
         return {"uid": uid, "token": decoded_token, "email": decoded_token.get("email")}
     except Exception as e:
+        logger.error(f"Token verification failed: {type(e).__name__}: {str(e)}")
         # Fallback for local testing with mock tokens
         try:
             import jwt
@@ -37,3 +44,12 @@ async def get_current_user(request: Request, token_data=Depends(security_scheme)
         # Typically if this dependency is called, auth is required.
         raise HTTPException(status_code=401, detail="Authentication required")
     return user
+
+
+async def get_optional_user(request: Request) -> Optional[dict]:
+    """
+    Optional authentication dependency.
+    Returns the user if authenticated, or None if not.
+    Does not raise 401 on missing/invalid auth.
+    """
+    return getattr(request.state, "user", None)

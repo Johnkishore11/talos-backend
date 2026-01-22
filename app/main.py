@@ -49,11 +49,11 @@ def is_public_endpoint(request: Request) -> bool:
     if path.startswith("/api/webhooks"):
         return True
     
-    # 3. Events (GET is public)
+    # 3. Events (GET is public, check-registration uses optional auth in route handler)
     if path.startswith("/api/events") and method == "GET":
         return True
 
-    # 4. Workshops (GET is public)
+    # 4. Workshops (GET is public, check-registration uses optional auth in route handler)
     if path.startswith("/api/workshops") and method == "GET":
         return True
         
@@ -69,30 +69,43 @@ async def auth_middleware(request: Request, call_next):
         return await call_next(request)
 
     logger.info(f"Incoming request: {request.method} {request.url.path}")
-    if is_public_endpoint(request):
-        # Even for public endpoints, if a token IS provided, we might want to resolve it 
-        # (optional auth). But for now, let's keep it simple: Public = No Auth Check.
+    
+    is_public = is_public_endpoint(request)
+    auth_header = request.headers.get("Authorization")
+    logger.info(f"Auth header present: {bool(auth_header)}, length: {len(auth_header) if auth_header else 0}, is_public: {is_public}")
+    
+    # For public endpoints without auth header, just proceed
+    if is_public and not auth_header:
         response = await call_next(request)
         return response
-
-    # Protected Endpoint
-    auth_header = request.headers.get("Authorization")
-    if not auth_header:
+    
+    # For protected endpoints, auth is required
+    if not is_public and not auth_header:
         return JSONResponse(status_code=401, content={"detail": "Missing or invalid authentication token"})
     
-    if auth_header.startswith("Bearer "):
-        token = auth_header.split("Bearer ")[1]
-    else:
-        token = auth_header
+    # If we have an auth header, try to verify it (for both public and protected endpoints)
+    if auth_header:
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split("Bearer ")[1]
+        else:
+            token = auth_header
         
-    try:
-        user = await verify_token_str(token)
-        request.state.user = user
-    except HTTPException as e:
-        return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
-    except Exception as e:
-        return JSONResponse(status_code=401, content={"detail": f"Authentication failed: {str(e)}"})
-        
+        logger.info(f"Token length: {len(token)}, first 20 chars: {token[:20] if len(token) > 20 else token}...")
+            
+        try:
+            user = await verify_token_str(token)
+            logger.info(f"Token verified successfully for user: {user.get('email')}")
+            request.state.user = user
+        except HTTPException as e:
+            logger.error(f"Token verification failed: {e.detail}")
+            if not is_public:
+                return JSONResponse(status_code=e.status_code, content={"detail": e.detail})
+            # For public endpoints with invalid token, just continue without user
+        except Exception as e:
+            logger.error(f"Token verification error: {str(e)}")
+            if not is_public:
+                return JSONResponse(status_code=401, content={"detail": f"Authentication failed: {str(e)}"})
+            # For public endpoints with invalid token, just continue without user
     response = await call_next(request)
     return response
 

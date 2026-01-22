@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_optional_user
 from app.services.firebase_service import db
 from app.services.email_service import send_event_registration_email
 from app.services.google_sheets_service import get_google_sheets_service
@@ -201,9 +201,12 @@ async def check_team_name(event_id: str, team_name: str):
 @router.get("/{event_id}/check-registration")
 async def check_user_registration(
     event_id: str,
-    current_user: dict = Depends(get_current_user)
+    current_user: Optional[dict] = Depends(get_optional_user)
 ):
     """Check if current user is already registered for an event"""
+    if not current_user:
+        return {"registered": False}
+    
     email = current_user.get("email")
     if not email:
         return {"registered": False}
