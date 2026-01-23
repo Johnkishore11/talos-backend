@@ -185,6 +185,9 @@ class GoogleSheetsService:
                 'Member 1 Name', 'Member 1 Email', 'Member 1 Phone',
                 'Member 2 Name', 'Member 2 Email', 'Member 2 Phone',
                 'Member 3 Name', 'Member 3 Email', 'Member 3 Phone',
+                'Member 4 Name', 'Member 4 Email', 'Member 4 Phone',
+                'Member 5 Name', 'Member 5 Email', 'Member 5 Phone',
+                'Member 6 Name', 'Member 6 Email', 'Member 6 Phone',
                 'Referral ID', 'Registered At', 'Registration ID', 'Status', 'Team Name'
             ]
             
@@ -203,8 +206,8 @@ class GoogleSheetsService:
                 leader_data.get('year', ''),
             ]
             
-            # Add member data (up to 3 members)
-            for i in range(3):
+            # Add member data (up to 6 members)
+            for i in range(6):
                 if i < len(members):
                     member = members[i]
                     row.extend([
@@ -231,7 +234,7 @@ class GoogleSheetsService:
             
             result = self.service.spreadsheets().values().append(
                 spreadsheetId=self.spreadsheet_id,
-                range=f'{sheet_name}!A:T',  # Range covering all columns
+                range=f'{sheet_name}!A:AC',  # Range covering all columns
                 valueInputOption='USER_ENTERED',
                 body=body
             ).execute()
