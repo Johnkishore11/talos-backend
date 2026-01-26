@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from app.dependencies import get_current_user, get_optional_user
 from app.services.firebase_service import db
 from app.services.email_service import send_event_registration_email
@@ -53,7 +54,9 @@ async def register_event(
     
     # 1. Check if event exists
     event_ref = db.collection("events").document(event_id)
-    event_doc = event_ref.get()
+    # event_doc = event_ref.get() # Blocking
+    event_doc = await run_in_threadpool(event_ref.get)
+    
     if not event_doc.exists:
         raise HTTPException(status_code=404, detail="Event not found")
     
@@ -87,18 +90,27 @@ async def register_event(
     
     # 5. Check if team name is unique for this event
     registrations_ref = db.collection(f"{event_id}_registrations")
-    existing_team = registrations_ref.where("team_name", "==", registration.team_name).limit(1).get()
+    # existing_team = registrations_ref.where("team_name", "==", registration.team_name).limit(1).get() # Blocking
+    existing_team = await run_in_threadpool(
+        registrations_ref.where("team_name", "==", registration.team_name).limit(1).get
+    )
     if list(existing_team):
         raise HTTPException(status_code=400, detail="Team name already exists for this event. Please choose a different name.")
     
     # 6. Check if leader email is already registered for this event
-    existing_leader = registrations_ref.where("leader_email", "==", registration.leader_email).limit(1).get()
+    # existing_leader = registrations_ref.where("leader_email", "==", registration.leader_email).limit(1).get() # Blocking
+    existing_leader = await run_in_threadpool(
+        registrations_ref.where("leader_email", "==", registration.leader_email).limit(1).get
+    )
     if list(existing_leader):
         raise HTTPException(status_code=400, detail="You are already registered for this event")
     
     # 7. Check if any team member email is already registered as leader
     for member in registration.members:
-        existing_member = registrations_ref.where("leader_email", "==", member.email).limit(1).get()
+        # existing_member = registrations_ref.where("leader_email", "==", member.email).limit(1).get() # Blocking
+        existing_member = await run_in_threadpool(
+            registrations_ref.where("leader_email", "==", member.email).limit(1).get
+        )
         if list(existing_member):
             raise HTTPException(status_code=400, detail=f"Email {member.email} is already registered for this event")
 
@@ -130,12 +142,14 @@ async def register_event(
     }
     
     # Store in event-specific collection
-    registrations_ref.document(reg_id).set(reg_data)
+    # registrations_ref.document(reg_id).set(reg_data) # Blocking
+    await run_in_threadpool(registrations_ref.document(reg_id).set, reg_data)
     
     # Update user document with registered event
     try:
         user_ref = db.collection("users").document(current_user["uid"])
-        user_doc = user_ref.get()
+        # user_doc = user_ref.get() # Blocking
+        user_doc = await run_in_threadpool(user_ref.get)
         
         if user_doc.exists:
             # Check if already in user's registered_events to prevent duplicates
@@ -150,14 +164,18 @@ async def register_event(
             
             if not already_in_list:
                 from google.cloud.firestore import ArrayUnion
-                user_ref.update({
-                    "registered_events": ArrayUnion([{
-                        "event_id": event_id,
-                        "registration_id": reg_id,
-                        "team_name": registration.team_name,
-                        "registered_at": datetime.utcnow().isoformat()
-                    }])
-                })
+                # user_ref.update(...) # Blocking
+                await run_in_threadpool(
+                    user_ref.update,
+                    {
+                        "registered_events": ArrayUnion([{
+                            "event_id": event_id,
+                            "registration_id": reg_id,
+                            "team_name": registration.team_name,
+                            "registered_at": datetime.utcnow().isoformat()
+                        }])
+                    }
+                )
     except Exception as e:
         print(f"Warning: Failed to update user document: {e}")
     

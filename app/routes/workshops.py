@@ -1,4 +1,5 @@
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks
+from fastapi.concurrency import run_in_threadpool
 from app.dependencies import get_current_user, get_optional_user
 from app.services.firebase_service import db
 from app.services import razorpay_service
@@ -46,7 +47,9 @@ async def create_workshop_payment_link(
     
     # 1. Get Workshop Details
     workshop_ref = db.collection("workshops").document(workshop_id)
-    workshop = workshop_ref.get()
+    # workshop = workshop_ref.get() # Blocking
+    workshop = await run_in_threadpool(workshop_ref.get)
+    
     if not workshop.exists:
         raise HTTPException(status_code=404, detail="Workshop not found")
     
@@ -63,7 +66,10 @@ async def create_workshop_payment_link(
 
     # 3. Check if already registered
     registrations_ref = db.collection(f"{workshop_id}_registrations")
-    existing_reg = registrations_ref.where("email", "==", registration.email).limit(1).get()
+    # existing_reg = registrations_ref.where("email", "==", registration.email).limit(1).get() # Blocking
+    existing_reg = await run_in_threadpool(
+        registrations_ref.where("email", "==", registration.email).limit(1).get
+    )
     if list(existing_reg):
         raise HTTPException(status_code=400, detail="This email is already registered for this workshop")
 
@@ -72,7 +78,9 @@ async def create_workshop_payment_link(
         reference_id = f"{workshop_id}_{int(datetime.utcnow().timestamp())}"
         callback_url = f"{settings.FRONTEND_URL}/workshops/{workshop_id}/payment-success"
         
-        payment_link = razorpay_service.create_payment_link(
+        # payment_link = razorpay_service.create_payment_link(...) # Blocking
+        payment_link = await run_in_threadpool(
+            razorpay_service.create_payment_link,
             amount=amount,
             description=f"Registration for {workshop_data.get('title', 'Workshop')}",
             customer_name=registration.name,
@@ -108,7 +116,8 @@ async def create_workshop_payment_link(
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
     }
-    db.collection("payments").document(payment_doc_id).set(payment_data)
+    # db.collection(...).set(...) # Blocking
+    await run_in_threadpool(db.collection("payments").document(payment_doc_id).set, payment_data)
 
     return {
         "payment_link_id": payment_link["id"],
@@ -136,7 +145,9 @@ async def payment_callback(
     # 1. Verify Signature
     if razorpay_signature:
         try:
-            razorpay_service.verify_payment_link_signature(
+            # razorpay_service.verify_payment_link_signature(...) # Blocking
+            await run_in_threadpool(
+                razorpay_service.verify_payment_link_signature,
                 payment_link_id,
                 payment_link_reference_id,
                 payment_link_status,
@@ -151,7 +162,8 @@ async def payment_callback(
     
     # 3. Get payment data
     payment_ref = db.collection("payments").document(payment_link_id)
-    payment_doc = payment_ref.get()
+    # payment_doc = payment_ref.get() # Blocking
+    payment_doc = await run_in_threadpool(payment_ref.get)
     if not payment_doc.exists:
         raise HTTPException(status_code=404, detail="Payment record not found")
     
@@ -166,7 +178,8 @@ async def payment_callback(
         }
     
     # 5. Get workshop details
-    workshop_doc = db.collection("workshops").document(workshop_id).get()
+    # workshop_doc = db.collection("workshops").document(workshop_id).get() # Blocking
+    workshop_doc = await run_in_threadpool(db.collection("workshops").document(workshop_id).get)
     if not workshop_doc.exists:
         raise HTTPException(status_code=404, detail="Workshop not found")
     workshop_data = workshop_doc.to_dict()
@@ -192,7 +205,11 @@ async def payment_callback(
         "payment_completed_at": datetime.utcnow()
     }
     
-    db.collection(f"{workshop_id}_registrations").document(reg_id).set(reg_data)
+    # db.collection(...).set(...) # Blocking
+    await run_in_threadpool(
+        db.collection(f"{workshop_id}_registrations").document(reg_id).set,
+        reg_data
+    )
     
     # Sync to Google Sheets
     background_tasks.add_task(

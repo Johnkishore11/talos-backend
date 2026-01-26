@@ -1,5 +1,6 @@
 from fastapi import Header, HTTPException, Depends, Request
 from fastapi.security import HTTPBearer
+from fastapi.concurrency import run_in_threadpool
 from firebase_admin import auth
 from typing import Optional
 import time
@@ -12,7 +13,7 @@ async def verify_token_str(token: str) -> dict:
     try:
         # Firebase maximum allowed clock_skew_seconds is 60 (1 minute)
         # Set to 60 instead of 300 to comply with Firebase limits
-        decoded_token = auth.verify_id_token(token, clock_skew_seconds=60)  # Allow max 60 seconds of skew
+        decoded_token = await run_in_threadpool(auth.verify_id_token, token, clock_skew_seconds=60)
         uid = decoded_token["uid"]
         logger.info(f"Token verified successfully for uid: {uid}")
         return {"uid": uid, "token": decoded_token, "email": decoded_token.get("email")}
