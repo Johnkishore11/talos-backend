@@ -21,7 +21,8 @@ origins = [
     "http://localhost:3000",
     "https://talos-nine.vercel.app",
     "https://taloscit.in",
-    "https://www.taloscit.in"
+    "https://www.taloscit.in",
+    "https://talos1.vercel.app"
 ]
 
 app.add_middleware(
